@@ -102,58 +102,42 @@ void pid_control_task(void *pvParameters) {
 // 馬達控制函式：根據四個浮點數 (-30.0 ~ 30.0) 控制馬達
 // 保留向後兼容性，但現在建議使用 set_motor_targets + pid_control_task
 void control_motors(const float *values) {
-    if (pid_enable) {
-        // 如果啟用 PID，只設定目標值，讓 PID 任務處理
-        set_motor_targets(values);
-    } else {
-        // 開環控制模式（原有邏輯）
-        for (int i = 0; i < 4; i++) {
-            float value = values[i];
-            float pwmFloat = fabs(value) / 30.0f * 255.0f;
-            if (pwmFloat > 0 && pwmFloat < PWM_MIN_OUTPUT) {
-                pwmFloat = PWM_MIN_OUTPUT;
-            }
-            if (pwmFloat > 255.0f) {
-                pwmFloat = 255.0f;
-            }
-            uint8_t pwmValue = static_cast<uint8_t>(pwmFloat);
-            if (value > 0) {
-                // 正轉
-                ledcWrite(i, pwmValue);
-                ledcWrite(i + 4, 0);
-            } else if (value < 0) {
-                // 反轉
-                ledcWrite(i, 0);
-                ledcWrite(i + 4, pwmValue);
-            } else {
-                // 停止
-                ledcWrite(i, 0);
-                ledcWrite(i + 4, 0);
-            }
-        }
+  for (int i = 0; i < 4; i++) {
+    float value = values[i];
+    uint8_t pwmValue = (uint8_t)(fabs(value) / 30.0 * 255.0f);
+    if (pwmValue < 100.0){
+        pwmValue = 100.0;
     }
+    if (value > 0) {
+      // 正轉
+      ledcWrite(i, pwmValue);
+      ledcWrite(i + 4, 0);
+    } else if (value < 0) {
+      // 反轉
+      ledcWrite(i, 0);
+      ledcWrite(i + 4, pwmValue);
+    } else {
+      // 停止
+      ledcWrite(i, 0);
+      ledcWrite(i + 4, 0);
+    }
+  }
 }
 
 void motor_test(){
     while(1){
         Serial0.println("Testing motors forward");
         for (int i = 0; i < 4; i++) {
-            ledcWrite(i, 150);
+            ledcWrite(i, 50);
             ledcWrite(i + 4, 0);
-        }
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            // ledcWrite(i, 0);
+            // ledcWrite(i + 4, 0);
+            // vTaskDelay(1000 / portTICK_PERIOD_MS);
+            // ledcWrite(i, 0);
+            // ledcWrite(i + 4, 200);
+            // vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-        Serial0.println("Testing motors backward");
-        for (int i = 0; i < 4; i++) {
-            ledcWrite(i, 0);
-            ledcWrite(i + 4, 150);
-        }
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-        Serial0.println("Stopping motors");
-        for (int i = 0; i < 4; i++) {
-            ledcWrite(i, 0);
-            ledcWrite(i + 4, 0);
         }
         vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
