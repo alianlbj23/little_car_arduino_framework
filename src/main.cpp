@@ -1,220 +1,173 @@
-#include <PID_v1.h>
 #include <Arduino.h>
-#include <ESP32Encoder.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <micro_ros_platformio.h>
+#include <rcl/rcl.h>
+#include <rcl/error_handling.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+#include <std_msgs/msg/float32_multi_array.h>
+#include <stdlib.h>
+#include <math.h>
 
-//---------------------------------------------------------------------
-// Global Encoder Instances and Variables
-//---------------------------------------------------------------------
-ESP32Encoder encoder0;
-ESP32Encoder encoder1;
-ESP32Encoder encoder2;
-ESP32Encoder encoder3;
+// 宏定義錯誤檢查
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ error_loop(); } }
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){} }
 
-// Array to store previous encoder counts (one per motor)
-long prevCounts[4] = {0, 0, 0, 0};
+// 錯誤處理迴圈
+void error_loop() {
+  while (1) {
+    // Serial0.println("micro-ROS 初始化發生錯誤！");
+    delay(100);
+  }
+}
 
-//---------------------------------------------------------------------
-// Forward Declarations
-//---------------------------------------------------------------------
-double getEncoderSpeed(int motorIndex);
-void setMotorSpeed(int motorIndex, double pwmValue);
-void movementTask(void *parameter);
-void pidControlTask(void *parameter);
+// 全域 micro-ROS 實體
+rcl_allocator_t allocator;
+rclc_support_t support;
+rcl_node_t node;
+rcl_subscription_t subscriber;
+rclc_executor_t executor;
+std_msgs__msg__Float32MultiArray msg;
 
-//---------------------------------------------------------------------
-// Motor and Encoder Configuration
-//---------------------------------------------------------------------
+// 訂閱回呼：根據接收到的四個浮點數控制四個馬達
+void subscription_callback(const void * msgin)
+{
+  const std_msgs__msg__Float32MultiArray * incoming_msg = (const std_msgs__msg__Float32MultiArray *)msgin;
+
+  // 檢查資料數量是否足夠 (至少 4 個數值)
+  if (incoming_msg->data.size < 4) {
+    // Serial0.println("Error: 接收到的陣列長度不足 4");
+    return;
+  }
+
+  // 根據接收到的數值控制馬達（使用外部函式處理）
+  extern void control_motors(const float *values);
+  control_motors(incoming_msg->data.data);
+}
+
+// 馬達配置結構
 struct MotorConfig {
-  uint8_t pwmA;  // Forward PWM channel
-  uint8_t pwmB;  // Reverse PWM channel
-  uint8_t encA;  // Encoder channel A
-  uint8_t encB;  // Encoder channel B
+  uint8_t pwmA;  // 正轉 PWM 腳位
+  uint8_t pwmB;  // 反轉 PWM 腳位
+  uint8_t encA;
+  uint8_t encB;
 };
 
-// Board pin assignments (as provided):
-// M1: PWM_A = GPIO4,  PWM_B = GPIO5,  Enc_A = GPIO6,  Enc_B = GPIO7
-// M2: PWM_A = GPIO15, PWM_B = GPIO16, Enc_A = GPIO47, Enc_B = GPIO48
-// M3: PWM_A = GPIO9,  PWM_B = GPIO10, Enc_A = GPIO11, Enc_B = GPIO12
-// M4: PWM_A = GPIO13, PWM_B = GPIO14, Enc_A = GPIO1,  Enc_B = GPIO2
-// (Note: The following array uses the order provided in your sketch.)
+// 定義四個馬達對應的 GPIO 腳位
 MotorConfig motors[4] = {
-  { 5, 4, 6, 7  },    // Motor 0: M1
-  { 15, 16, 47, 48 },  // Motor 1: M2
-  { 9, 10, 11, 12 },   // Motor 2: M3
-  { 13, 14, 1, 2 }     // Motor 3: M4
+  {4, 5, 6, 7},      // M1
+  {15, 16, 47, 48},  // M2
+  {9, 10, 11, 12},   // M3
+  {13, 14, 1, 2}     // M4
 };
 
-//---------------------------------------------------------------------
-// PID Variables
-//---------------------------------------------------------------------
-double setpoints[4] = { 100, 100, 100, 100 }; // Desired speeds (counts/sec)
-double inputs[4]    = { 0, 0, 0, 0 };          // Measured speeds (counts/sec)
-double outputs[4]   = { 0, 0, 0, 0 };          // PID outputs (PWM value)
+// PWM 設定：5kHz, 8位解析度；LED 通道 0~3 控制正轉，4~7 控制反轉
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
 
-double Kp = 2.0, Ki = 5.0, Kd = 1.0;           // Tuning parameters
+// 馬達控制函式：根據四個浮點數 (範圍 -1.0 ~ 1.0) 控制馬達正轉、反轉或停止
+void control_motors(const float *values) {
+  for (int i = 0; i < 4; i++) {
+    float value = values[i];
+    uint8_t pwmValue = (uint8_t)(fabs(value) * 255.0f);
+    if (value > 0) {
+      // 正轉：正轉通道輸出 pwmValue，反轉通道關閉
+      ledcWrite(i, pwmValue);
+      ledcWrite(i + 4, 0);
+    } else if (value < 0) {
+      // 反轉：反轉通道輸出 pwmValue，正轉通道關閉
+      ledcWrite(i, 0);
+      ledcWrite(i + 4, pwmValue);
+    } else {
+      // 停止：兩邊均關閉
+      ledcWrite(i, 0);
+      ledcWrite(i + 4, 0);
+    }
+  }
+}
 
-// Array of PID controller pointers, one per motor
-PID* pids[4];
+// 初始化 micro-ROS 實體的函式，包含節點、訂閱者與記憶體配置
+bool create_entities() {
+    allocator = rcl_get_default_allocator();
 
-//---------------------------------------------------------------------
-// Setup Function
-//---------------------------------------------------------------------
-void setup() {
-  // Use Serial0 for ESP32-S3 debugging
+    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+    RCCHECK(rcl_init_options_init(&init_options, allocator));
+    RCCHECK(rcl_init_options_set_domain_id(&init_options, 1));  // 設定 domain_id 為 1
+    RCCHECK(rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator));
+
+    RCCHECK(rclc_node_init_default(&node, "micro_ros_arduino_node", "", &support));
+
+    RCCHECK(rclc_subscription_init_default(
+        &subscriber,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+        "car_C_rear_wheel"));
+
+    // 為 Float32MultiArray 配置資料記憶體
+    msg.data.capacity = 10;
+    msg.data.size = 0;
+    msg.data.data = (float *)malloc(msg.data.capacity * sizeof(float));
+    msg.layout.dim.capacity = 10;
+    msg.layout.dim.size = 0;
+    msg.layout.dim.data = (std_msgs__msg__MultiArrayDimension *)malloc(msg.layout.dim.capacity * sizeof(std_msgs__msg__MultiArrayDimension));
+    for (size_t i = 0; i < msg.layout.dim.capacity; i++) {
+        msg.layout.dim.data[i].label.capacity = 10;
+        msg.layout.dim.data[i].label.size = 0;
+        msg.layout.dim.data[i].label.data = (char *)malloc(msg.layout.dim.data[i].label.capacity * sizeof(char));
+    }
+
+    RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
+    RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &msg, &subscription_callback, ON_NEW_DATA));
+
+    return true;
+}
+
+// 使用 Serial0 作為 UART 傳輸與除錯的初始化
+void init_serial0() {
   Serial0.begin(115200);
-
-  // Initialize motor PWM and encoder pins
-  for (int i = 0; i < 4; i++) {
-    pinMode(motors[i].pwmA, OUTPUT);
-    pinMode(motors[i].pwmB, OUTPUT);
-    pinMode(motors[i].encA, INPUT);
-    pinMode(motors[i].encB, INPUT);
-  }
-
-  // Attach encoders in half-quadrature mode
-  // (Ensure your wiring and the encoder library settings match your hardware)
-  encoder0.attachHalfQuad(motors[0].encA, motors[0].encB);
-  encoder1.attachHalfQuad(motors[1].encA, motors[1].encB);
-  encoder2.attachHalfQuad(motors[2].encA, motors[2].encB);
-  encoder3.attachHalfQuad(motors[3].encA, motors[3].encB);
-
-  // Clear initial encoder counts
-  encoder0.clearCount();
-  encoder1.clearCount();
-  encoder2.clearCount();
-  encoder3.clearCount();
-
-  // Initialize PID controllers for each motor
-  for (int i = 0; i < 4; i++) {
-    pids[i] = new PID(&inputs[i], &outputs[i], &setpoints[i], Kp, Ki, Kd, DIRECT);
-    pids[i]->SetMode(AUTOMATIC);
-    // Set PID output limits to match the PWM range (-255 to 255)
-    pids[i]->SetOutputLimits(-255, 255);
-  }
-
-  // Create FreeRTOS tasks for PID control and movement pattern
-  xTaskCreate(pidControlTask, "PIDControlTask", 4096, NULL, 1, NULL);
-  xTaskCreate(movementTask, "MovementTask", 2048, NULL, 1, NULL);
+  delay(2000);
 }
 
-//---------------------------------------------------------------------
-// loop() Function (Unused)
-//---------------------------------------------------------------------
+void setup() {
+  // 初始化 Serial0
+  init_serial0();
+//   Serial0.println("啟動 micro-ROS 與馬達控制程式 (使用 UART)");
+
+  // 設定馬達 PWM 腳位：正轉與反轉分別用不同的 LEDC 通道
+  for (int i = 0; i < 4; i++) {
+    ledcSetup(i, pwmFreq, pwmResolution);
+    ledcAttachPin(motors[i].pwmA, i);
+    ledcSetup(i + 4, pwmFreq, pwmResolution);
+    ledcAttachPin(motors[i].pwmB, i + 4);
+  }
+
+  // 初始化 micro-ROS 傳輸（注意：platformio.ini 需設定 transport = serial）
+  set_microros_serial_transports(Serial0);
+
+  // 建立 micro-ROS 節點、訂閱者與相關實體
+  if (!create_entities()) {
+    //   Serial0.println("建立 micro-ROS 實體失敗！");
+      error_loop();
+  }
+
+  // 建立 FreeRTOS 任務以持續運行 micro-ROS executor
+  xTaskCreate(
+    [](void * parameter) {
+      while(1) {
+        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+      }
+    },
+    "micro_ros_executor_task",
+    4096,
+    NULL,
+    1,
+    NULL
+  );
+}
+
 void loop() {
-  // With FreeRTOS tasks, loop() is not used.
+  // loop() 保留空白，由 FreeRTOS 任務持續處理 micro-ROS 與馬達控制
   vTaskDelay(1000 / portTICK_PERIOD_MS);
-}
-
-//---------------------------------------------------------------------
-// PID Control Task
-//---------------------------------------------------------------------
-void pidControlTask(void *parameter) {
-  // This task runs continuously every 100 ms.
-  for (;;) {
-    for (int i = 0; i < 4; i++) {
-      // Compute speed using encoder counts
-      inputs[i] = getEncoderSpeed(i);
-      // Compute PID output based on current speed and desired setpoint
-      pids[i]->Compute();
-      // Update motor PWM based on PID output
-      setMotorSpeed(i, outputs[i]);
-    }
-
-    // Debug print current measurements, setpoints, and outputs
-    Serial0.print("Inputs: ");
-    for (int i = 0; i < 4; i++) {
-      Serial0.print(inputs[i]);
-      Serial0.print("  ");
-    }
-    Serial0.print("Setpoints: ");
-    for (int i = 0; i < 4; i++) {
-      Serial0.print(setpoints[i]);
-      Serial0.print("  ");
-    }
-    Serial0.print("Outputs: ");
-    for (int i = 0; i < 4; i++) {
-      Serial0.print(outputs[i]);
-      Serial0.print("  ");
-    }
-    Serial0.println();
-
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-  }
-}
-
-//---------------------------------------------------------------------
-// Movement Pattern Task
-//---------------------------------------------------------------------
-void movementTask(void *parameter) {
-  // This task cycles the setpoints: forward 1 sec, stop 1 sec, backward 1 sec.
-  for (;;) {
-    // Move forward
-    for (int i = 0; i < 4; i++) {
-      setpoints[i] = 100;
-    }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    // Stop
-    for (int i = 0; i < 4; i++) {
-      setpoints[i] = 0;
-    }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    // Move backward
-    for (int i = 0; i < 4; i++) {
-      setpoints[i] = -100;
-    }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-  }
-}
-
-//---------------------------------------------------------------------
-// getEncoderSpeed Implementation
-//---------------------------------------------------------------------
-double getEncoderSpeed(int motorIndex) {
-  long currentCount = 0;
-
-  // Read current count from the appropriate encoder
-  switch (motorIndex) {
-    case 0:
-      currentCount = encoder0.getCount();
-      break;
-    case 1:
-      currentCount = encoder1.getCount();
-      break;
-    case 2:
-      currentCount = encoder2.getCount();
-      break;
-    case 3:
-      currentCount = encoder3.getCount();
-      break;
-    default:
-      return 0;
-  }
-
-  // Calculate difference from previous count
-  long diff = currentCount - prevCounts[motorIndex];
-  // Update previous count for next iteration
-  prevCounts[motorIndex] = currentCount;
-
-  // If the PID task runs every 100 ms, then dt = 0.1 seconds.
-  double dt = 0.1;
-  double speed = diff / dt;  // Speed in counts per second
-
-  return speed;
-}
-
-//---------------------------------------------------------------------
-// setMotorSpeed Implementation
-//---------------------------------------------------------------------
-void setMotorSpeed(int motorIndex, double pwmValue) {
-  // For forward motion, drive PWM on pwmA and set pwmB to 0.
-  // For reverse motion, drive PWM on pwmB (with absolute value) and set pwmA to 0.
-  if (pwmValue >= 0) {
-    analogWrite(motors[motorIndex].pwmA, (int)pwmValue);
-    analogWrite(motors[motorIndex].pwmB, 0);
-  } else {
-    analogWrite(motors[motorIndex].pwmA, 0);
-    analogWrite(motors[motorIndex].pwmB, (int)(-pwmValue));
-  }
 }
