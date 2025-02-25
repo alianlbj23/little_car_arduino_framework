@@ -8,4 +8,5 @@
 // 馬達控制函式：根據四個浮點數 (-1.0 ~ 1.0) 控制馬達
 void control_motors(const float *values);
 void setup_motor_pwm();
+void motor_test();
 #endif // _MOTOR_CONTROL_HPP_
