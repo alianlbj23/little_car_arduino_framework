@@ -4,7 +4,10 @@
 void control_motors(const float *values) {
   for (int i = 0; i < 4; i++) {
     float value = values[i];
-    uint8_t pwmValue = (uint8_t)(fabs(value) * 255.0f);
+    uint8_t pwmValue = (uint8_t)(fabs(value) / 30.0 * 255.0f);
+    if (pwmValue < 100.0){
+        pwmValue = 100.0;
+    }
     if (value > 0) {
       // 正轉
       ledcWrite(i, pwmValue);
@@ -24,15 +27,15 @@ void control_motors(const float *values) {
 void motor_test(){
     while(1){
         for (int i = 0; i < 4; i++) {
-            ledcWrite(i, 200);
+            ledcWrite(i, 50);
             ledcWrite(i + 4, 0);
             vTaskDelay(1000 / portTICK_PERIOD_MS);
-            ledcWrite(i, 0);
-            ledcWrite(i + 4, 0);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            ledcWrite(i, 0);
-            ledcWrite(i + 4, 200);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            // ledcWrite(i, 0);
+            // ledcWrite(i + 4, 0);
+            // vTaskDelay(1000 / portTICK_PERIOD_MS);
+            // ledcWrite(i, 0);
+            // ledcWrite(i + 4, 200);
+            // vTaskDelay(1000 / portTICK_PERIOD_MS);
 
         }
     }
