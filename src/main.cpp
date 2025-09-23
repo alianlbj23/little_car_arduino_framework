@@ -9,6 +9,10 @@ void init_serial0() {
   delay(100);
 }
 
+void motor_test_task(void *pvParameters) {
+    motor_test();
+}
+
 void setup() {
   // 初始化 Serial0
     init_serial0();
@@ -16,7 +20,9 @@ void setup() {
 
     // 設定馬達 PWM 腳位：正轉與反轉分別用不同的 LEDC 通道
     setup_motor_pwm();
+    setup_encoders();
     xTaskCreatePinnedToCore(MicroROSWheel, "MicroROSWheel", 81192 ,NULL, 1, NULL, 1);
+    //xTaskCreatePinnedToCore(motor_test_task, "motor_test_task", 4096, NULL, 1, NULL, 1);
     delay(100);
 }
 

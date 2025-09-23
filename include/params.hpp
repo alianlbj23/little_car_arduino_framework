@@ -1,6 +1,7 @@
 #ifndef _PARAMS_HPP_
 #define _PARAMS_HPP_
 #include <cstdint>
+#include "ESP32Encoder.h"
 
 // 馬達配置結構
 struct MotorConfig {
@@ -15,5 +16,12 @@ struct MotorConfig {
 extern MotorConfig motors[4];
 extern const int pwmFreq;
 extern const int pwmResolution;
+extern bool pid_enable;
+
+// PID gains
+extern double Kp, Ki, Kd;
+
+extern ESP32Encoder encoders[4];
+
 
 #endif // _PARAMS_HPP_
