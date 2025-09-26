@@ -19,6 +19,6 @@ const int pwmResolution = 8;
 bool pid_enable = true;
 
 // PID gains
-double Kp = 2.0, Ki = 5.0, Kd = 1.0;
+double Kp = 2.0, Ki = 0.08, Kd = 0.2;
 
 ESP32Encoder encoders[4];

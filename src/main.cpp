@@ -21,8 +21,14 @@ void setup() {
     // 設定馬達 PWM 腳位：正轉與反轉分別用不同的 LEDC 通道
     setup_motor_pwm();
     setup_encoders();
+    
+    // 啟動 micro-ROS 任務
     xTaskCreatePinnedToCore(MicroROSWheel, "MicroROSWheel", 81192 ,NULL, 1, NULL, 1);
-    //xTaskCreatePinnedToCore(motor_test_task, "motor_test_task", 4096, NULL, 1, NULL, 1);
+    
+    // 啟動 PID 控制任務 (高優先級，精確 10ms 週期)
+    xTaskCreatePinnedToCore(pid_control_task, "PIDControl", 4096, NULL, 2, NULL, 0);
+    
+    // xTaskCreatePinnedToCore(motor_test_task, "motor_test_task", 4096, NULL, 1, NULL, 1);
     delay(100);
 }
 

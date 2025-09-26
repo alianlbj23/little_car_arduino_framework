@@ -72,8 +72,14 @@ void subscription_callback(const void *msgin) {
     // 將接收到的訊息轉型
     const std_msgs__msg__Float32MultiArray *incoming_msg = (const std_msgs__msg__Float32MultiArray *)msgin;
     // motor_test();
-    // 控制馬達（依照 -30 ~ 30 的數值）
-    control_motors(incoming_msg->data.data);
+    
+    // 只設定目標值，讓 PID 控制任務持續處理
+    if (pid_enable) {
+        set_motor_targets(incoming_msg->data.data);
+    } else {
+        // 開環控制直接呼叫原函式
+        control_motors(incoming_msg->data.data);
+    }
 
     // 將接收到的數值複製到 wheel_info_msg 中（可依需求修改或轉換數據）
     wheel_info_msg.data.size = incoming_msg->data.size;
