@@ -12,14 +12,22 @@ volatile long prev_counts[4] = {0,0,0,0};
 float speed_meas[4] = {0,0,0,0};   // 每10ms的delta ticks
 float speed_set[4]  = {0,0,0,0};   // 每10ms的目標delta ticks
 
-constexpr float SPEED_SCALE = 3.0f;  // 可調參數
+constexpr float SPEED_SCALE = 3.0f;         // 可調參數：輸入 -> 目標增量
+constexpr int PWM_MIN_OUTPUT = 100;         // 克服靜摩擦的最小PWM
+constexpr int PID_STOP_THRESHOLD = 15;      // PID輸出小於此視為停止
+constexpr long ENCODER_NOISE_THRESHOLD = 1; // 絕對增量小於等於此值視為雜訊
+constexpr float SPEED_STOP_BAND = 5.0f;     // 目標/回授均落在此區間則直接停車
 
 // 新增：只設定目標值的函式（由 ROS subscriber 呼叫）
 void set_motor_targets(const float *values) {
     for (int i = 0; i < 4; i++) {
         // 將 -30..30 映射為每10ms的目標增量（tick/10ms）
-        speed_set[i] = values[i] * SPEED_SCALE;
-        setpoints[i] = speed_set[i];       // 與 PID 的 setpoints 對齊
+        float target = values[i] * SPEED_SCALE;
+        if (fabs(target) <= SPEED_STOP_BAND) {
+            target = 0.0f;
+        }
+        speed_set[i] = target;
+        setpoints[i] = target;       // 與 PID 的 setpoints 對齊
     }
 }
 
@@ -34,34 +42,55 @@ void pid_control_task(void *pvParameters) {
                 long delta = now - prev_counts[i];
                 prev_counts[i] = now;
 
+                if (delta <= ENCODER_NOISE_THRESHOLD && delta >= -ENCODER_NOISE_THRESHOLD) {
+                    delta = 0;
+                }
+
                 // 量測改為「每10ms的增量 ticks」
-                speed_meas[i] = (float)delta;
+                speed_meas[i] = static_cast<float>(delta);
+
+                float measurement = speed_meas[i];
+                float target = speed_set[i];
+
+                if (fabs(target) <= SPEED_STOP_BAND && fabs(measurement) <= SPEED_STOP_BAND) {
+                    speed_set[i] = 0.0f;
+                    inputs[i] = 0.0f;
+                    setpoints[i] = 0.0f;
+                    outputs[i] = 0.0f;
+                    pids[i].Reset();
+                    ledcWrite(i, 0);
+                    ledcWrite(i + 4, 0);
+                    continue;
+                }
 
                 // 餵給 PID 的 inputs / setpoints 必須是同單位
-                inputs[i]    = speed_meas[i];
-                setpoints[i] = speed_set[i];
+                inputs[i]    = measurement;
+                setpoints[i] = target;
 
                 pids[i].Compute();
 
                 // 將 PID 輸出（-255..255）轉為雙向PWM
                 int pwm = (int)roundf(outputs[i]);
 
-                // 最小啟動PWM（克服靜摩擦）
-                if (pwm != 0) {
-                    int mag = abs(pwm);
-                    if (mag < 100) mag = 100;
-                    if (mag > 255) mag = 255;
-
-                    if (pwm > 0) {
-                        ledcWrite(i, mag);
-                        ledcWrite(i + 4, 0);
-                    } else {
-                        ledcWrite(i, 0);
-                        ledcWrite(i + 4, mag);
-                    }
-                } else {
+                if (abs(pwm) < PID_STOP_THRESHOLD) {
                     ledcWrite(i, 0);
                     ledcWrite(i + 4, 0);
+                    continue;
+                }
+
+                int mag = abs(pwm);
+                if (mag < PWM_MIN_OUTPUT) {
+                    mag = PWM_MIN_OUTPUT;
+                } else if (mag > 255) {
+                    mag = 255;
+                }
+
+                if (pwm > 0) {
+                    ledcWrite(i, mag);
+                    ledcWrite(i + 4, 0);
+                } else {
+                    ledcWrite(i, 0);
+                    ledcWrite(i + 4, mag);
                 }
             }
         }
@@ -80,10 +109,14 @@ void control_motors(const float *values) {
         // 開環控制模式（原有邏輯）
         for (int i = 0; i < 4; i++) {
             float value = values[i];
-            uint8_t pwmValue = (uint8_t)(fabs(value) / 30.0 * 255.0f);
-            if (pwmValue > 0 && pwmValue < 100) {
-                pwmValue = 100;
+            float pwmFloat = fabs(value) / 30.0f * 255.0f;
+            if (pwmFloat > 0 && pwmFloat < PWM_MIN_OUTPUT) {
+                pwmFloat = PWM_MIN_OUTPUT;
             }
+            if (pwmFloat > 255.0f) {
+                pwmFloat = 255.0f;
+            }
+            uint8_t pwmValue = static_cast<uint8_t>(pwmFloat);
             if (value > 0) {
                 // 正轉
                 ledcWrite(i, pwmValue);
@@ -149,4 +182,3 @@ void setup_encoders() {
         pids[i].SetMode(1);
     }
 }
-
