@@ -14,6 +14,7 @@ void setup_motor_pwm();
 void setup_encoders();
 void motor_test();
 void motor_test_pid();
+void pwm_rpm_test();
 
 extern float setpoints[4], inputs[4], outputs[4];
 extern QuickPID pids[4];

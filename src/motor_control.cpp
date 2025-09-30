@@ -19,7 +19,7 @@ constexpr long ENCODER_NOISE_THRESHOLD = 1; // 絕對增量小於等於此值視
 constexpr float SPEED_STOP_BAND = 5.0f;     // 目標/回授均落在此區間則直接停車
 
 constexpr int   ENC_PPR    = 11;     // 編碼器每圈脈衝數（看 datasheet）
-constexpr int   QUAD_MULT  = 4;      // 正交解碼倍率 (x1, x2, x4)
+constexpr int   QUAD_MULT  = 4;      // 正交解碼倍率 (FullQuad = x4)
 constexpr float GEAR_RATIO = 30.0f;  // 減速比 (馬達軸 → 輪子)
 constexpr float LOOP_DT    = 0.01f;  // 控制週期 (10ms)
 
@@ -144,6 +144,54 @@ void control_motors(const float *values) {
     }
 }
 
+inline float ticks10ms_to_rpm(float t10) {
+    return t10 * (6000.0f / TICKS_PER_WHEEL_REV);
+}
+
+// 掃描 PWM，測量對應的 RPM
+void pwm_rpm_test() {
+    int pwm_values[] = {50, 100, 150, 200, 255, 500};  // 想測的 PWM 點
+    int n = sizeof(pwm_values) / sizeof(pwm_values[0]);
+
+    for (int p=0; p<n; p++) {
+        int pwm = pwm_values[p];
+        Serial0.printf("\n=== Test PWM = %d ===\n", pwm);
+
+        // 設定 PWM，正轉
+        for (int i=0; i<4; i++) {
+            ledcWrite(i, pwm);
+            ledcWrite(i+4, 0);
+        }
+
+        // 等待馬達穩定
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        // 測量 1 秒內的 ticks
+        long start_counts[4];
+        for (int i=0; i<4; i++) {
+            start_counts[i] = encoders[i].getCount();
+        }
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);  // 量測 1 秒
+
+        for (int i=0; i<4; i++) {
+            long delta = encoders[i].getCount() - start_counts[i];
+            float ticks_per_10ms = (float)delta / 100.0f; // 1 秒 = 100*10ms
+            float rpm = ticks10ms_to_rpm(ticks_per_10ms);
+            Serial0.printf("Motor %d: %ld ticks, %.2f ticks/10ms, %.2f rpm at PWM %d\n", 
+                          i, delta, ticks_per_10ms, rpm, pwm);
+        }
+
+        // 停止馬達
+        for (int i=0; i<4; i++) {
+            ledcWrite(i, 0);
+            ledcWrite(i+4, 0);
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+
 void motor_test(){
     while(1){
         Serial0.println("Testing motors forward");
@@ -171,27 +219,38 @@ void motor_test(){
 
 void motor_test_pid(){
     while(1){
-        Serial0.println("PID Test: Forward 15 ticks/10ms");
-        float forward_targets[4] = {300.0f, 300.0f, 300.0f, 300.0f};
+        Serial0.println("PID Test: Forward 350 rpm");
+        float forward_targets[4] = {350,350,350,350};
         set_motor_targets(forward_targets);
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
 
-        Serial0.println("PID Test: Backward -10 ticks/10ms");
-        float backward_targets[4] = {-300.0f, -300.0f, -300.0f, -300.0f};
+        // 等控制建立起來，再每200ms印一次
+        vTaskDelay(300 / portTICK_PERIOD_MS);
+        for (int t=0; t<15; t++) { // 約3秒
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+            Serial0.println("Current RPM:");
+            for (int i=0;i<4;i++){
+                float rpm = ticks10ms_to_rpm(speed_meas[i]); // 不再動 prev_counts！
+                Serial0.printf("Motor %d: %.2f rpm\n", i, rpm);
+            }
+        }
+
+        Serial0.println("PID Test: Backward -300 rpm");
+        float backward_targets[4] = {-300,-300,-300,-300};
         set_motor_targets(backward_targets);
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        vTaskDelay(300 / portTICK_PERIOD_MS);
+        for (int t=0; t<15; t++) {
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+            Serial0.println("Current RPM:");
+            for (int i=0;i<4;i++){
+                float rpm = ticks10ms_to_rpm(speed_meas[i]);
+                Serial0.printf("Motor %d: %.2f rpm\n", i, rpm);
+            }
+        }
 
         Serial0.println("PID Test: Stop");
-        float stop_targets[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float stop_targets[4] = {0,0,0,0};
         set_motor_targets(stop_targets);
         vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-        // 印出編碼器數值
-        Serial0.println("Encoder counts:");
-        for (int i = 0; i < 4; i++) {
-            Serial0.printf("Motor %d: %ld ticks\n", i, encoders[i].getCount());
-        }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -206,7 +265,7 @@ void setup_motor_pwm() {
 
 void setup_encoders() {
     for (int i = 0; i < 4; i++) {
-        encoders[i].attachHalfQuad(motors[i].encA, motors[i].encB);
+        encoders[i].attachFullQuad(motors[i].encA, motors[i].encB);
         encoders[i].clearCount();
         prev_counts[i] = 0;
 

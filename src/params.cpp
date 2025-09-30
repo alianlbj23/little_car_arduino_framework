@@ -12,8 +12,8 @@ MotorConfig motors[4] = {
   {13, 14, 1, 2}     // M4
 };
 
-// PWM 設定：5kHz, 8位解析度；LED 通道 0~3 控制正轉，4~7 控制反轉
-const int pwmFreq = 1000;
+// PWM 設定：提高頻率到20kHz，8位解析度；LED 通道 0~3 控制正轉，4~7 控制反轉
+const int pwmFreq = 20000;  // 20kHz - 更適合馬達控制
 const int pwmResolution = 8;
 
 bool pid_enable = true;
