@@ -18,16 +18,26 @@ constexpr int PID_STOP_THRESHOLD = 15;      // PID輸出小於此視為停止
 constexpr long ENCODER_NOISE_THRESHOLD = 1; // 絕對增量小於等於此值視為雜訊
 constexpr float SPEED_STOP_BAND = 5.0f;     // 目標/回授均落在此區間則直接停車
 
+constexpr int   ENC_PPR    = 11;     // 編碼器每圈脈衝數（看 datasheet）
+constexpr int   QUAD_MULT  = 4;      // 正交解碼倍率 (x1, x2, x4)
+constexpr float GEAR_RATIO = 30.0f;  // 減速比 (馬達軸 → 輪子)
+constexpr float LOOP_DT    = 0.01f;  // 控制週期 (10ms)
+
+constexpr float TICKS_PER_MOTOR_REV = ENC_PPR * QUAD_MULT;
+constexpr float TICKS_PER_WHEEL_REV = TICKS_PER_MOTOR_REV * GEAR_RATIO;
 // 新增：只設定目標值的函式（由 ROS subscriber 呼叫）
+
 void set_motor_targets(const float *values) {
     for (int i = 0; i < 4; i++) {
         // 將 -30..30 映射為每10ms的目標增量（tick/10ms）
-        float target = values[i] * SPEED_SCALE;
-        if (fabs(target) <= SPEED_STOP_BAND) {
-            target = 0.0f;
+        // float target = values[i] * SPEED_SCALE;
+        float rpm = values[i];
+        float target_ticks = rpm * (TICKS_PER_WHEEL_REV / 6000.0f);
+        if (fabs(target_ticks) <= SPEED_STOP_BAND) {
+            target_ticks = 0.0f;
         }
-        speed_set[i] = target;
-        setpoints[i] = target;       // 與 PID 的 setpoints 對齊
+        speed_set[i] = target_ticks;
+        setpoints[i] = target_ticks;       // 與 PID 的 setpoints 對齊
     }
 }
 
@@ -162,12 +172,12 @@ void motor_test(){
 void motor_test_pid(){
     while(1){
         Serial0.println("PID Test: Forward 15 ticks/10ms");
-        float forward_targets[4] = {30.0f, 30.0f, 30.0f, 30.0f};
+        float forward_targets[4] = {300.0f, 300.0f, 300.0f, 300.0f};
         set_motor_targets(forward_targets);
         vTaskDelay(3000 / portTICK_PERIOD_MS);
 
         Serial0.println("PID Test: Backward -10 ticks/10ms");
-        float backward_targets[4] = {-30.0f, -30.0f, -30.0f, -30.0f};
+        float backward_targets[4] = {-300.0f, -300.0f, -300.0f, -300.0f};
         set_motor_targets(backward_targets);
         vTaskDelay(3000 / portTICK_PERIOD_MS);
 
