@@ -52,7 +52,7 @@ void pid_control_task(void *pvParameters) {
                 float measurement = speed_meas[i];
                 float target = speed_set[i];
 
-                if (fabs(target) <= SPEED_STOP_BAND && fabs(measurement) <= SPEED_STOP_BAND) {
+                if (fabs(target) <= SPEED_STOP_BAND) {
                     speed_set[i] = 0.0f;
                     inputs[i] = 0.0f;
                     setpoints[i] = 0.0f;
