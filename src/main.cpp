@@ -13,6 +13,10 @@ void motor_test_task(void *pvParameters) {
     motor_test();
 }
 
+void motor_test_pid_task(void *pvParameters) {
+    motor_test_pid();
+}
+
 void setup() {
   // 初始化 Serial0
     init_serial0();
@@ -24,6 +28,9 @@ void setup() {
     
     // 啟動 micro-ROS 任務
     xTaskCreatePinnedToCore(MicroROSWheel, "MicroROSWheel", 81192 ,NULL, 1, NULL, 1);
+
+    // PID test
+    // xTaskCreatePinnedToCore(motor_test_pid_task, "motor_test_pid_task", 4096, NULL, 1, NULL, 1);
     
     // 啟動 PID 控制任務 (高優先級，精確 10ms 週期)
     xTaskCreatePinnedToCore(pid_control_task, "PIDControl", 4096, NULL, 2, NULL, 0);

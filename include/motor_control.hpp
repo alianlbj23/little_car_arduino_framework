@@ -13,6 +13,7 @@ void pid_control_task(void *pvParameters);    // PID 持續控制任務
 void setup_motor_pwm();
 void setup_encoders();
 void motor_test();
+void motor_test_pid();
 
 extern float setpoints[4], inputs[4], outputs[4];
 extern QuickPID pids[4];

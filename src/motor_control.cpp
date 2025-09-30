@@ -159,6 +159,32 @@ void motor_test(){
     }
 }
 
+void motor_test_pid(){
+    while(1){
+        Serial0.println("PID Test: Forward 15 ticks/10ms");
+        float forward_targets[4] = {30.0f, 30.0f, 30.0f, 30.0f};
+        set_motor_targets(forward_targets);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+        Serial0.println("PID Test: Backward -10 ticks/10ms");
+        float backward_targets[4] = {-30.0f, -30.0f, -30.0f, -30.0f};
+        set_motor_targets(backward_targets);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+        Serial0.println("PID Test: Stop");
+        float stop_targets[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        set_motor_targets(stop_targets);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+        // 印出編碼器數值
+        Serial0.println("Encoder counts:");
+        for (int i = 0; i < 4; i++) {
+            Serial0.printf("Motor %d: %ld ticks\n", i, encoders[i].getCount());
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup_motor_pwm() {
     for (int i = 0; i < 4; i++) {
         ledcSetup(i, pwmFreq, pwmResolution);
