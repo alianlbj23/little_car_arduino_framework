@@ -4,7 +4,7 @@
 void control_motors(const float *values) {
   for (int i = 0; i < 4; i++) {
     float value = values[i];
-    uint8_t pwmValue = (uint8_t)(fabs(value) / 30.0 * 255.0f);
+    uint8_t pwmValue = (uint8_t)(fabs(value) / 20.0 * 255.0f);
     if (pwmValue < 100.0){
         pwmValue = 100.0;
     }
